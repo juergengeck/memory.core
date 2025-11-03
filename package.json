@@ -1,0 +1,49 @@
+{
+  "name": "@memory/core",
+  "version": "0.1.0",
+  "description": "Platform-agnostic memory management for LAMA",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./handlers/*": {
+      "import": "./dist/handlers/*.js",
+      "types": "./dist/handlers/*.d.ts"
+    },
+    "./services/*": {
+      "import": "./dist/services/*.js",
+      "types": "./dist/services/*.d.ts"
+    },
+    "./recipes/*": {
+      "import": "./dist/recipes/*.js",
+      "types": "./dist/recipes/*.d.ts"
+    },
+    "./types/*": {
+      "import": "./dist/types/*.js",
+      "types": "./dist/types/*.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "clean": "rm -rf dist"
+  },
+  "peerDependencies": {
+    "@refinio/one.core": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0"
+  },
+  "keywords": [
+    "memory",
+    "chat-memory",
+    "lama",
+    "one.core"
+  ],
+  "author": "",
+  "license": "MIT"
+}
