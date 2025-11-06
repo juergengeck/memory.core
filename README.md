@@ -4,8 +4,8 @@ Platform-agnostic memory management for LAMA.
 
 ## Features
 
-- **ChatMemoryHandler**: Chat-memory integration layer
-- **MemoryHandler**: Basic CRUD for SubjectAssembly objects
+- **ChatMemoryPlan**: Chat-memory integration layer
+- **MemoryPlan**: Basic CRUD for SubjectAssembly objects
 - **ChatMemoryService**: Core service for extracting subjects from chat messages
 - **Keyword-based retrieval**: Find related memories using Jaccard similarity
 - **ONE.core integration**: Stores memories as versioned objects
@@ -14,7 +14,7 @@ Platform-agnostic memory management for LAMA.
 
 ```
 memory.core/
-├── handlers/           # Handler layer (thin API wrappers)
+├── plans/              # Plan layer (thin API wrappers)
 ├── services/           # Core business logic
 ├── recipes/            # ONE.core recipe definitions
 └── types/              # TypeScript type definitions
@@ -25,22 +25,22 @@ memory.core/
 ### In lama.electron (Node.js)
 
 ```typescript
-import { ChatMemoryHandler, ChatMemoryService } from '@memory.core';
+import { ChatMemoryPlan, ChatMemoryService } from '@memory.core';
 
 const memoryService = new ChatMemoryService({ nodeOneCore });
-const memoryHandler = new ChatMemoryHandler({ chatMemoryService });
+const memoryPlan = new ChatMemoryPlan({ chatMemoryService });
 
 // Enable memories for a topic
-await memoryHandler.enableMemories(topicId);
+await memoryPlan.enableMemories(topicId);
 
 // Extract subjects from messages
-const result = await memoryHandler.extractSubjects({
+const result = await memoryPlan.extractSubjects({
   topicId,
   limit: 50
 });
 
 // Find related memories
-const related = await memoryHandler.findRelatedMemories(
+const related = await memoryPlan.findRelatedMemories(
   topicId,
   ['keyword1', 'keyword2'],
   10

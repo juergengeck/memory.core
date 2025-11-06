@@ -22,5 +22,5 @@
     "types": []
   },
   "include": ["src/**/*.ts", "src/**/*.d.ts"],
-  "exclude": ["node_modules", "dist", "**/*.js"]
+  "exclude": ["node_modules", "dist", "**/*.js", "src/initialization/**/*"]
 }

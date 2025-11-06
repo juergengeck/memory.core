@@ -18,7 +18,7 @@ import type {
 export interface ChatMemoryServiceDependencies {
   nodeOneCore: any;
   topicAnalyzer?: any;            // From one-ai for subject extraction
-  memoryHandler?: any;            // MemoryHandler for storing subjects
+  memoryPlan?: any;               // MemoryPlan for storing subjects
   storeVersionedObject?: any;     // For storing associations
   getObjectByIdHash?: any;        // For retrieving associations
 }
@@ -114,8 +114,8 @@ export class ChatMemoryService {
       throw new Error('Topic analyzer not available');
     }
 
-    if (!this.deps.memoryHandler) {
-      throw new Error('Memory handler not available');
+    if (!this.deps.memoryPlan) {
+      throw new Error('Memory plan not available');
     }
 
     const config = this.getConfig(request.topicId);
@@ -189,15 +189,15 @@ export class ChatMemoryService {
   async findRelatedMemories(
     request: FindRelatedMemoriesRequest
   ): Promise<FindRelatedMemoriesResponse> {
-    if (!this.deps.memoryHandler) {
-      throw new Error('Memory handler not available');
+    if (!this.deps.memoryPlan) {
+      throw new Error('Memory plan not available');
     }
 
-    const allSubjectIds = await this.deps.memoryHandler.listSubjects();
+    const allSubjectIds = await this.deps.memoryPlan.listSubjects();
     const relatedMemories: RelatedMemory[] = [];
 
     for (const idHash of allSubjectIds) {
-      const subject = await this.deps.memoryHandler.getSubject(idHash);
+      const subject = await this.deps.memoryPlan.getSubject(idHash);
 
       if (!subject) continue;
 
@@ -250,11 +250,11 @@ export class ChatMemoryService {
     newKeywords: string[],
     additionalDescription?: string
   ): Promise<void> {
-    if (!this.deps.memoryHandler) {
-      throw new Error('Memory handler not available');
+    if (!this.deps.memoryPlan) {
+      throw new Error('Memory plan not available');
     }
 
-    const subject = await this.deps.memoryHandler.getSubject(subjectIdHash);
+    const subject = await this.deps.memoryPlan.getSubject(subjectIdHash);
 
     if (!subject) {
       throw new Error(`Subject not found: ${subjectIdHash}`);
@@ -279,7 +279,7 @@ export class ChatMemoryService {
     metadata.set('lastUpdatedAt', Date.now().toString());
 
     // Store updated version
-    await this.deps.memoryHandler.updateSubject(subjectIdHash, {
+    await this.deps.memoryPlan.updateSubject(subjectIdHash, {
       description,
       metadata
     });
@@ -374,7 +374,7 @@ export class ChatMemoryService {
       metadata.set('excerpt', subject.messageExcerpt);
     }
 
-    const result = await this.deps.memoryHandler.createSubject({
+    const result = await this.deps.memoryPlan.createSubject({
       id: `chat-${topicId}-${subject.name.toLowerCase().replace(/\s+/g, '-')}`,
       name: subject.name,
       description: subject.description || subject.messageExcerpt,

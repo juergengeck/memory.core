@@ -5,9 +5,13 @@
  * for the LAMA system using ONE.core.
  */
 
-// Handlers
-export * from './handlers/ChatMemoryHandler.js';
-export * from './handlers/MemoryHandler.js';
+// Plans
+export * from './plans/ChatMemoryPlan.js';
+export * from './plans/MemoryPlan.js';
+
+// Initialization
+// TODO: Fix MemoryServicesPlan imports - needs dependency injection like AIInitializationPlan
+// export * from './initialization/MemoryServicesPlan.js';
 
 // Services
 export * from './services/ChatMemoryService.js';

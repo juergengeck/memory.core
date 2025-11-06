@@ -10,13 +10,17 @@
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
     },
-    "./handlers/*": {
-      "import": "./dist/handlers/*.js",
-      "types": "./dist/handlers/*.d.ts"
+    "./plans/*": {
+      "import": "./dist/plans/*.js",
+      "types": "./dist/plans/*.d.ts"
     },
     "./services/*": {
       "import": "./dist/services/*.js",
       "types": "./dist/services/*.d.ts"
+    },
+    "./initialization/*": {
+      "import": "./dist/initialization/*.js",
+      "types": "./dist/initialization/*.d.ts"
     },
     "./recipes/*": {
       "import": "./dist/recipes/*.js",

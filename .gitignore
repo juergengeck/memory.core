@@ -1,9 +1,10 @@
 # Dependencies
 node_modules/
-package-lock.json
 
 # Build output
 dist/
+
+# TypeScript
 *.tsbuildinfo
 
 # IDE
@@ -18,15 +19,21 @@ dist/
 Thumbs.db
 
 # Logs
+logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Environment
+.env
+.env.local
+.env.*.local
+
 # Testing
 coverage/
 .nyc_output/
 
-# Temporary
+# Temporary files
 *.tmp
-.cache/
+*.temp
