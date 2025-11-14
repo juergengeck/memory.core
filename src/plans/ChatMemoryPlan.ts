@@ -3,7 +3,7 @@
  * Platform-agnostic plan for chat-memory integration
  */
 
-import type { SHA256IdHash } from '@refinio/one.core/lib/util/type-checks.js';
+import type { SHA256IdHash } from '../types/one-core-types.js';
 import type { ChatMemoryService } from '../services/ChatMemoryService.js';
 import type {
   ChatMemoryConfig,

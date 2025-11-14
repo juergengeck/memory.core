@@ -3,7 +3,7 @@
  * Platform-agnostic types for connecting chat topics with memory subjects
  */
 
-import type { SHA256Hash, SHA256IdHash } from '@refinio/one.core/lib/util/type-checks.js';
+import type { SHA256Hash, SHA256IdHash } from './one-core-types.js';
 
 /**
  * Chat memory configuration stored per topic

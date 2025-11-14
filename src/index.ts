@@ -15,6 +15,10 @@ export * from './plans/MemoryPlan.js';
 
 // Services
 export * from './services/ChatMemoryService.js';
+export * from './services/SubjectIndex.js';
+
+// Migration
+export * from './migration/index.js';
 
 // Types
 export * from './types/chat-memory-types.js';

@@ -3,7 +3,7 @@
  * Manages automatic extraction of subjects from chat and storage as memories
  */
 
-import type { SHA256Hash, SHA256IdHash } from '@refinio/one.core/lib/util/type-checks.js';
+import type { SHA256Hash, SHA256IdHash } from '../types/one-core-types.js';
 import type {
   ChatMemoryConfig,
   ChatMemoryAssociation,
