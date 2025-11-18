@@ -4,6 +4,8 @@
  */
 
 import type { SHA256IdHash } from '../types/one-core-types.js';
+import type { Subject, SubjectSource } from '../../../lama.core/one-ai/types/Subject.js';
+import type { Keyword } from '../../../lama.core/one-ai/types/Keyword.js';
 import { SubjectIndex, createIndexEntry, type SubjectMatch } from '../services/SubjectIndex.js';
 import {
   generateGlobalSubjectId,
@@ -11,22 +13,23 @@ import {
   parseChatScopedId,
   convertToGlobalSubject
 } from '../migration/subject-migration.js';
+import { keywordsToHashes } from '../../../lama.core/one-ai/models/Keyword.js';
+
+// Re-export SubjectSource for migration code
+export type { SubjectSource };
 
 export interface CreateSubjectParams {
   id: string;
-  name: string;
-  description?: string;
-  keywords?: string[];
-  metadata?: Map<string, string>;
-  sources?: SubjectSource[];     // NEW: Source tracking
+  description: string;              // Use description instead of name (matches Subject schema)
+  keywords?: string[];              // Will be converted to SHA256IdHash<Keyword>[]
+  sources?: SubjectSource[];        // Source tracking
   sign?: boolean;
   theme?: 'light' | 'dark' | 'auto';
 }
 
 export interface UpdateSubjectParams {
-  name?: string;
-  description?: string;
-  metadata?: Map<string, string>;
+  description?: string;             // Use description instead of name
+  keywords?: string[];              // Will be converted to SHA256IdHash<Keyword>[]
   sign?: boolean;
   theme?: 'light' | 'dark' | 'auto';
 }
@@ -37,24 +40,8 @@ export interface StoreAssemblyResult {
   filePath: string;
 }
 
-export interface SubjectSource {
-  type: 'chat' | 'manual' | 'import';
-  id: string;                    // topicId for chat, userId for manual, etc.
-  extractedAt: number;
-  confidence?: number;
-}
-
-export interface SubjectAssembly {
-  $type$: 'SubjectAssembly';
-  id: string;
-  name: string;
-  description?: string;
-  keywords?: string[];           // Extracted keywords
-  metadata?: Map<string, string>;
-  sources?: SubjectSource[];     // NEW: Track all sources that mention this subject
-  created: number;
-  modified?: number;
-}
+// SubjectSource moved to @lama/core/one-ai/types/Subject.ts
+// Subject is now the canonical type - no more SubjectAssembly duplication!
 
 /**
  * Memory Plan
@@ -71,6 +58,7 @@ export interface SubjectAssembly {
 export class MemoryPlan {
   private index: SubjectIndex;
   private indexInitialized: boolean = false;
+  private subjectCache: Map<string, Subject> = new Map(); // idHash -> subject
 
   constructor(
     private subjectPlan: any,
@@ -93,7 +81,7 @@ export class MemoryPlan {
 
     try {
       const subjectIds = await this.listSubjects();
-      const subjects: SubjectAssembly[] = [];
+      const subjects: Subject[] = [];
 
       for (const idHash of subjectIds) {
         const subject = await this.getSubject(idHash);
@@ -105,9 +93,9 @@ export class MemoryPlan {
       // Build index from all subjects
       const entries = subjects.map(s => createIndexEntry({
         idHash: s.id as SHA256IdHash<any>,
-        name: s.name,
+        name: s.description || s.id,  // Use description as name for indexing
         keywords: s.keywords,
-        metadata: s.metadata
+        metadata: undefined           // metadata is now stored as Supply objects
       }));
 
       this.index.buildFromSubjects(entries);
@@ -181,29 +169,30 @@ export class MemoryPlan {
             }
           }
 
-          // Merge keywords
-          const existingKeywords = new Set(existing.keywords || []);
-          const newKeywords = params.keywords || [];
-          for (const kw of newKeywords) {
-            existingKeywords.add(kw);
+          // Merge keywords (keeping SHA256IdHash<Keyword>[] type)
+          const existingKeywordSet = new Set<SHA256IdHash<Keyword>>(existing.keywords || []);
+          const newKeywordHashes = params.keywords
+            ? await this.convertKeywordsToHashes(params.keywords)
+            : [];
+          for (const kw of newKeywordHashes) {
+            existingKeywordSet.add(kw);
           }
 
           // Update existing subject
           const updateResult = await this.subjectPlan.updateSubject(existingId, {
-            ...params,
-            id: globalId,
-            keywords: Array.from(existingKeywords),
+            description: params.description,
+            keywords: Array.from(existingKeywordSet),
             sources: mergedSources
-          });
+          } as any);
 
           // Update index
           const updated = await this.getSubject(existingId);
           if (updated && this.indexInitialized) {
             this.index.updateSubject(createIndexEntry({
               idHash: updated.id as SHA256IdHash<any>,
-              name: updated.name,
+              name: updated.description || updated.id,  // Use description as name
               keywords: updated.keywords,
-              metadata: updated.metadata
+              metadata: undefined                        // metadata is now Supply objects
             }));
           }
 
@@ -215,24 +204,44 @@ export class MemoryPlan {
       console.warn('[MemoryPlan] Error checking for existing subject:', error);
     }
 
+    // Convert keyword strings to SHA256IdHash<Keyword>[]
+    const keywordHashes = params.keywords
+      ? await this.convertKeywordsToHashes(params.keywords)
+      : [];
+
     // Create new subject with global ID
     const result = await this.subjectPlan.createSubject({
-      ...params,
       id: globalId,
+      description: params.description,
+      keywords: keywordHashes as any,  // SubjectPlan expects string[], we convert to hashes first
       sources
-    });
+    } as any);
+
+    // Cache the created subject immediately (no need to query it back!)
+    // Use canonical Subject type with proper keyword SHA256IdHash references
+    const created = {
+      $type$: 'Subject' as const,
+      id: globalId,
+      topic: sources[0]?.id || '', // Use first source as topic for backward compat
+      keywords: keywordHashes,     // SHA256IdHash<Keyword>[] from helper
+      timeRanges: [{ start: Date.now(), end: Date.now() }],
+      messageCount: 1,
+      createdAt: Date.now(),
+      lastSeenAt: Date.now(),
+      description: params.description,
+      sources, // Multi-topic support
+      archived: false
+    } as Subject;
+    this.subjectCache.set(String(result.idHash), created);
 
     // Update index
     if (this.indexInitialized) {
-      const created = await this.getSubject(result.idHash as SHA256IdHash<any>);
-      if (created) {
-        this.index.addSubject(createIndexEntry({
-          idHash: created.id as SHA256IdHash<any>,
-          name: created.name,
-          keywords: created.keywords,
-          metadata: created.metadata
-        }));
-      }
+      this.index.addSubject(createIndexEntry({
+        idHash: created.id as SHA256IdHash<any>,
+        name: created.description || created.id,  // Use description as name
+        keywords: created.keywords,
+        metadata: undefined                        // metadata is now Supply objects
+      }));
     }
 
     return result;
@@ -244,8 +253,19 @@ export class MemoryPlan {
   async getSubject(
     idHash: SHA256IdHash<any>,
     options: { verifySignature?: boolean } = {}
-  ): Promise<SubjectAssembly | null> {
-    return await this.subjectPlan.getSubject(idHash, options);
+  ): Promise<Subject | null> {
+    // Check cache first
+    const cached = this.subjectCache.get(String(idHash));
+    if (cached) {
+      return cached;
+    }
+
+    // Fall back to storage query
+    const subject = await this.subjectPlan.getSubject(idHash, options);
+    if (subject) {
+      this.subjectCache.set(String(idHash), subject);
+    }
+    return subject;
   }
 
   /**
@@ -263,9 +283,9 @@ export class MemoryPlan {
       if (updated) {
         this.index.updateSubject(createIndexEntry({
           idHash: updated.id as SHA256IdHash<any>,
-          name: updated.name,
+          name: updated.description || updated.id,  // Use description as name
           keywords: updated.keywords,
-          metadata: updated.metadata
+          metadata: undefined                        // metadata is now Supply objects
         }));
       }
     }
@@ -342,9 +362,9 @@ export class MemoryPlan {
    * @param topicId Chat topic ID
    * @returns Array of subjects mentioned in this chat
    */
-  async getSubjectsForChat(topicId: string): Promise<SubjectAssembly[]> {
+  async getSubjectsForChat(topicId: string): Promise<Subject[]> {
     const allSubjectIds = await this.listSubjects();
-    const chatSubjects: SubjectAssembly[] = [];
+    const chatSubjects: Subject[] = [];
 
     for (const idHash of allSubjectIds) {
       const subject = await this.getSubject(idHash);
@@ -423,36 +443,37 @@ export class MemoryPlan {
     }
 
     // Get all subjects across all topics
-    const allChannels = await this.channelManager.getMatchingChannelInfos();
+    // Query Subject objects from global memory storage (using canonical Subject type)
+    const allSubjectIds = await this.listSubjects();
     const relevantSubjects = [];
 
-    for (const channel of allChannels) {
+    for (const subjectId of allSubjectIds) {
       try {
-        const subjects = await this.topicAnalysisModel.getSubjects(channel.id);
+        const subject = await this.getSubject(subjectId);
+        if (!subject) continue;
 
-        // Find subjects matching extracted keywords
-        for (const subject of subjects) {
-          if (subject.archived) continue;
+        const subjectKeywords = subject.keywords || [];
+        const matchingKeywords = keywords.filter((kw: string) =>
+          subjectKeywords.some((sk: string) =>
+            sk.toLowerCase().includes(kw.toLowerCase()) ||
+            kw.toLowerCase().includes(sk.toLowerCase())
+          )
+        );
 
-          const subjectKeywords = subject.keywords || [];
-          const matchingKeywords = keywords.filter((kw: string) =>
-            subjectKeywords.some((sk: string) =>
-              sk.toLowerCase().includes(kw.toLowerCase()) ||
-              kw.toLowerCase().includes(sk.toLowerCase())
-            )
-          );
+        if (matchingKeywords.length > 0) {
+          // Extract topicId from sources (use first chat source)
+          const chatSource = subject.sources?.find(s => s.type === 'chat');
+          const topicId = chatSource?.id || 'unknown';
 
-          if (matchingKeywords.length > 0) {
-            relevantSubjects.push({
-              subject,
-              topicId: channel.id,
-              matchingKeywords,
-              relevanceScore: matchingKeywords.length
-            });
-          }
+          relevantSubjects.push({
+            subject,
+            topicId,
+            matchingKeywords,
+            relevanceScore: matchingKeywords.length
+          });
         }
       } catch (e) {
-        // Skip topics without subjects
+        // Skip invalid subjects
       }
     }
 
@@ -464,5 +485,13 @@ export class MemoryPlan {
       keywords,
       subjects: topResults
     };
+  }
+
+  /**
+   * Convert keyword strings to SHA256IdHash<Keyword>[]
+   * Helper method that creates Keyword objects and returns their hashes
+   */
+  private async convertKeywordsToHashes(keywords: string[]): Promise<any[]> {
+    return await keywordsToHashes(keywords);
   }
 }

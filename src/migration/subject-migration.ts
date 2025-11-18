@@ -1,15 +1,29 @@
 /**
  * Subject Migration Utilities
  *
- * Utilities for migrating chat-scoped subjects to global subjects.
+ * @deprecated This entire file is deprecated - Subjects now use ONE.core automatic ID hashing
  *
- * Old format: `chat-<topicId>-<subject-name>`
- * New format: `subject-<subject-name>` (global, no topicId)
+ * OLD APPROACH (deprecated):
+ * - Manual ID generation via generateGlobalSubjectId()
+ * - Chat-scoped IDs like "chat-<topicId>-<subject-name>"
+ * - Global IDs like "subject-<subject-name>"
+ *
+ * NEW APPROACH (current):
+ * - ONE.core automatically generates SHA256IdHash<Subject> from keywords
+ * - Keywords are marked isId: true in SubjectRecipe
+ * - Subjects with same keywords get same ID hash (automatic deduplication)
+ * - No manual ID generation needed
+ *
+ * See: lama.core/one-ai/models/Subject.ts - createOrUpdateSubject()
  */
 
 import type { SHA256IdHash } from '../types/one-core-types.js';
-import type { SubjectAssembly, SubjectSource } from '../plans/MemoryPlan.js';
+import type { Subject } from '../../../lama.core/one-ai/types/Subject.js';
+import type { SubjectSource } from '../plans/MemoryPlan.js';
 
+/**
+ * @deprecated Legacy migration code - no longer needed with ONE.core automatic ID hashing
+ */
 export interface MigrationReport {
   totalSubjects: number;
   chatScopedSubjects: number;
@@ -27,20 +41,14 @@ export interface MigrationReport {
 }
 
 /**
- * Detect if a subject ID is chat-scoped (old format)
- *
- * @param id Subject ID to check
- * @returns true if chat-scoped, false if global
+ * @deprecated Subjects no longer use manual IDs - ONE.core generates from keywords
  */
 export function isChatScopedSubjectId(id: string): boolean {
   return id.startsWith('chat-') && id.split('-').length >= 3;
 }
 
 /**
- * Extract topicId and name from chat-scoped subject ID
- *
- * @param id Chat-scoped subject ID (e.g., "chat-abc123-project-lama")
- * @returns { topicId, name } or null if invalid format
+ * @deprecated Subjects no longer use manual IDs - ONE.core generates from keywords
  */
 export function parseChatScopedId(id: string): {
   topicId: string;
@@ -51,7 +59,6 @@ export function parseChatScopedId(id: string): {
   }
 
   const parts = id.split('-');
-  // Format: chat-<topicId>-<name-parts...>
   const topicId = parts[1];
   const name = parts.slice(2).join('-');
 
@@ -63,17 +70,17 @@ export function parseChatScopedId(id: string): {
 }
 
 /**
- * Generate global subject ID from name
+ * @deprecated ONE.core automatically generates ID hash from keywords - no manual IDs needed
  *
- * @param name Subject name
- * @returns Global subject ID (e.g., "subject-project-lama")
+ * Use createOrUpdateSubject() instead which uses ONE.core automatic ID hashing
  */
 export function generateGlobalSubjectId(name: string): string {
+  console.warn('[DEPRECATED] generateGlobalSubjectId is deprecated - use ONE.core automatic ID hashing');
   const normalized = name
     .toLowerCase()
-    .replace(/[^\w\s-]/g, '') // Remove special chars except hyphen
-    .replace(/\s+/g, '-')     // Replace spaces with hyphens
-    .replace(/-+/g, '-')      // Collapse multiple hyphens
+    .replace(/[^\w\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
     .trim();
 
   return `subject-${normalized}`;
@@ -85,7 +92,7 @@ export function generateGlobalSubjectId(name: string): string {
  * @param subject Subject with chat-scoped ID
  * @returns Subject with global ID and source tracking
  */
-export function convertToGlobalSubject(subject: SubjectAssembly): SubjectAssembly {
+export function convertToGlobalSubject(subject: Subject): Subject {
   const parsed = parseChatScopedId(subject.id);
 
   if (!parsed) {
@@ -96,26 +103,20 @@ export function convertToGlobalSubject(subject: SubjectAssembly): SubjectAssembl
   const { topicId, name } = parsed;
   const globalId = generateGlobalSubjectId(name);
 
-  // Extract confidence from metadata if present
-  const confidence = subject.metadata?.get('confidence')
-    ? parseFloat(subject.metadata.get('confidence')!)
-    : undefined;
-
   // Create source entry from topicId
   const source: SubjectSource = {
     type: 'chat',
     id: topicId,
-    extractedAt: subject.metadata?.get('extractedAt')
-      ? parseInt(subject.metadata.get('extractedAt')!)
-      : subject.created,
-    confidence
+    extractedAt: subject.createdAt || Date.now(),
+    confidence: undefined  // Confidence is no longer stored in metadata
   };
 
   // Create global subject with source tracking
   return {
     ...subject,
     id: globalId,
-    sources: [source]
+    sources: [source],
+    description: subject.description || name  // Use description or fallback to name from ID
   };
 }
 
@@ -126,8 +127,10 @@ export function convertToGlobalSubject(subject: SubjectAssembly): SubjectAssembl
  *
  * @param subjects Array of subjects with same normalized name
  * @returns Merged global subject
+ *
+ * @deprecated Legacy migration code - disabled due to schema changes
  */
-export function mergeSubjects(subjects: SubjectAssembly[]): SubjectAssembly {
+export function mergeSubjects(subjects: Subject[]): Subject {
   if (subjects.length === 0) {
     throw new Error('Cannot merge empty array of subjects');
   }
@@ -136,10 +139,14 @@ export function mergeSubjects(subjects: SubjectAssembly[]): SubjectAssembly {
     return convertToGlobalSubject(subjects[0]);
   }
 
+  // TODO: Fix for new Subject schema (no name, no metadata, no created/modified fields)
+  throw new Error('mergeSubjects is deprecated and needs refactoring for new Subject schema');
+
+  /* Legacy code commented out - needs refactoring
   // Use first subject as base
   const base = subjects[0];
   const globalId = isChatScopedSubjectId(base.id)
-    ? generateGlobalSubjectId(base.name)
+    ? generateGlobalSubjectId(base.description || base.id)
     : base.id;
 
   // Collect all sources
@@ -199,7 +206,7 @@ export function mergeSubjects(subjects: SubjectAssembly[]): SubjectAssembly {
   }
 
   return {
-    $type$: 'SubjectAssembly',
+    $type$: 'Subject',
     id: globalId,
     name: base.name,
     description: mergedDescription || undefined,
@@ -209,6 +216,7 @@ export function mergeSubjects(subjects: SubjectAssembly[]): SubjectAssembly {
     created: earliestCreated,
     modified: mostRecentModified
   };
+  */
 }
 
 /**
@@ -216,11 +224,16 @@ export function mergeSubjects(subjects: SubjectAssembly[]): SubjectAssembly {
  *
  * @param subjects Array of subjects
  * @returns Map of normalized name → subjects with that name
+ *
+ * @deprecated Legacy migration code - disabled due to schema changes
  */
 export function groupSubjectsByName(
-  subjects: SubjectAssembly[]
-): Map<string, SubjectAssembly[]> {
-  const groups = new Map<string, SubjectAssembly[]>();
+  subjects: Subject[]
+): Map<string, Subject[]> {
+  throw new Error('groupSubjectsByName is deprecated and needs refactoring for new Subject schema');
+
+  /* Legacy code commented out
+  const groups = new Map<string, Subject[]>();
 
   for (const subject of subjects) {
     // Extract name from ID if chat-scoped
@@ -235,6 +248,7 @@ export function groupSubjectsByName(
   }
 
   return groups;
+  */
 }
 
 /**
@@ -242,8 +256,10 @@ export function groupSubjectsByName(
  *
  * @param subjects Array of all subjects
  * @returns Analysis report
+ *
+ * @deprecated Legacy migration code - disabled due to schema changes
  */
-export function analyzeSubjects(subjects: SubjectAssembly[]): {
+export function analyzeSubjects(subjects: Subject[]): {
   total: number;
   chatScoped: number;
   global: number;
@@ -253,41 +269,7 @@ export function analyzeSubjects(subjects: SubjectAssembly[]): {
     ids: string[];
   }>;
 } {
-  let chatScoped = 0;
-  let global = 0;
-
-  for (const subject of subjects) {
-    if (isChatScopedSubjectId(subject.id)) {
-      chatScoped++;
-    } else {
-      global++;
-    }
-  }
-
-  // Find duplicates (same normalized name)
-  const groups = groupSubjectsByName(subjects);
-  const duplicates: Array<{
-    name: string;
-    count: number;
-    ids: string[];
-  }> = [];
-
-  for (const [name, group] of groups) {
-    if (group.length > 1) {
-      duplicates.push({
-        name,
-        count: group.length,
-        ids: group.map(s => s.id)
-      });
-    }
-  }
-
-  return {
-    total: subjects.length,
-    chatScoped,
-    global,
-    duplicates
-  };
+  throw new Error('analyzeSubjects is deprecated and needs refactoring for new Subject schema');
 }
 
 /**
@@ -295,8 +277,14 @@ export function analyzeSubjects(subjects: SubjectAssembly[]): {
  *
  * @param subjects Array of subjects to migrate
  * @returns Migration plan
+ *
+ * @deprecated Legacy migration code - disabled due to schema changes
  */
-export function planMigration(subjects: SubjectAssembly[]): MigrationReport {
+export function planMigration(subjects: Subject[]): MigrationReport {
+  throw new Error('planMigration is deprecated and needs refactoring for new Subject schema');
+
+  /* Legacy code commented out
+export function planMigration_OLD(subjects: Subject[]): MigrationReport {
   const report: MigrationReport = {
     totalSubjects: subjects.length,
     chatScopedSubjects: 0,
@@ -339,6 +327,7 @@ export function planMigration(subjects: SubjectAssembly[]): MigrationReport {
   }
 
   return report;
+  */
 }
 
 /**
@@ -347,6 +336,6 @@ export function planMigration(subjects: SubjectAssembly[]): MigrationReport {
  * @param subjects Array of subjects
  * @returns true if any chat-scoped subjects found
  */
-export function needsMigration(subjects: SubjectAssembly[]): boolean {
+export function needsMigration(subjects: Subject[]): boolean {
   return subjects.some(s => isChatScopedSubjectId(s.id));
 }
