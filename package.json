@@ -3,32 +3,32 @@
   "version": "0.1.0",
   "description": "Platform-agnostic memory management for LAMA",
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/memory.core/src/index.js",
+  "types": "./dist/memory.core/src/index.d.ts",
   "exports": {
     ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "import": "./dist/memory.core/src/index.js",
+      "types": "./dist/memory.core/src/index.d.ts"
     },
     "./plans/*": {
-      "import": "./dist/plans/*.js",
-      "types": "./dist/plans/*.d.ts"
+      "import": "./dist/memory.core/src/plans/*.js",
+      "types": "./dist/memory.core/src/plans/*.d.ts"
     },
     "./services/*": {
-      "import": "./dist/services/*.js",
-      "types": "./dist/services/*.d.ts"
+      "import": "./dist/memory.core/src/services/*.js",
+      "types": "./dist/memory.core/src/services/*.d.ts"
     },
     "./initialization/*": {
-      "import": "./dist/initialization/*.js",
-      "types": "./dist/initialization/*.d.ts"
+      "import": "./dist/memory.core/src/initialization/*.js",
+      "types": "./dist/memory.core/src/initialization/*.d.ts"
     },
     "./recipes/*": {
-      "import": "./dist/recipes/*.js",
-      "types": "./dist/recipes/*.d.ts"
+      "import": "./dist/memory.core/src/recipes/*.js",
+      "types": "./dist/memory.core/src/recipes/*.d.ts"
     },
     "./types/*": {
-      "import": "./dist/types/*.js",
-      "types": "./dist/types/*.d.ts"
+      "import": "./dist/memory.core/src/types/*.js",
+      "types": "./dist/memory.core/src/types/*.d.ts"
     }
   },
   "scripts": {
