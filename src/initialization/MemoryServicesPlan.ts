@@ -164,13 +164,13 @@ export class MemoryServicesPlan {
   ): Promise<any> {
     console.log('[MemoryServicesPlan] Initializing Chat Memory Plan...');
 
-    const { MemoryPlan } = await import('@memory/core');
+    const { SubjectMemoryPlan } = await import('@memory/core');
     const { ChatMemoryService } = await import('@memory/core');
     const { ChatMemoryPlan } = await import('@memory/core');
 
-    // Create MemoryPlan wrapper
-    const memoryPlan = new MemoryPlan(subjectPlan);
-    console.log('[MemoryServicesPlan] ✅ Memory Plan created');
+    // Create SubjectMemoryPlan wrapper
+    const memoryPlan = new SubjectMemoryPlan(subjectPlan);
+    console.log('[MemoryServicesPlan] ✅ Subject Memory Plan created');
 
     // Create ChatMemoryService
     const chatMemoryService = new ChatMemoryService({

@@ -14,6 +14,7 @@
 // Plans
 export * from './plans/ChatMemoryPlan.js';
 export * from './plans/MemoryPlan.js';
+export * from './plans/SubjectMemoryPlan.js';
 
 // Initialization
 // NOTE: Subject management now uses lama.core's SubjectsPlan directly.

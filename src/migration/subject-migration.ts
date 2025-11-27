@@ -19,7 +19,7 @@
 
 import type { SHA256IdHash } from '../types/one-core-types.js';
 import type { Subject } from '../../../lama.core/one-ai/types/Subject.js';
-import type { SubjectSource } from '../plans/MemoryPlan.js';
+import type { SubjectSource } from '../plans/SubjectMemoryPlan.js';
 
 /**
  * @deprecated Legacy migration code - no longer needed with ONE.core automatic ID hashing
