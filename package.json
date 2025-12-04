@@ -37,7 +37,8 @@
     "clean": "rm -rf dist"
   },
   "peerDependencies": {
-    "@refinio/one.core": "*"
+    "@refinio/one.core": "*",
+    "@lama/core": "*"
   },
   "devDependencies": {
     "typescript": "^5.3.0"
