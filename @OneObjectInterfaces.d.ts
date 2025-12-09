@@ -17,8 +17,9 @@ declare module '@OneObjectInterfaces' {
         Proposal: Proposal;
         ProposalInteractionPlan: ProposalInteractionPlan;
         ProposalInteractionResponse: ProposalInteractionResponse;
-        AssemblyPlan: AssemblyPlan;
-        CubeAssembly: CubeAssembly;
+        Plan: Plan;
+        Story: Story;
+        Assembly: Assembly;
     }
 
     // Add our custom ID object types
@@ -243,37 +244,79 @@ declare module '@OneObjectInterfaces' {
         error?: string; // Optional: if success = false
     }
 
-    export interface AssemblyPlan {
-        $type$: 'AssemblyPlan';
-        id: string; // ID property - call identifier
+    /**
+     * Plan - Template with domain and learned patterns
+     *
+     * Plans contain:
+     * - domain: What category this plan belongs to
+     * - demandPatterns/supplyPatterns: Learned matching patterns
+     * - creator: Who created this plan
+     */
+    export interface Plan {
+        $type$: 'Plan';
+        id: string;  // ID property
         name: string;
-        description: string;
+        description?: string;
         demandPatterns: Array<{
             keywords: string[];
-            urgency: number;
-            criteria: { conversationId: string; prompt: string };
+            urgency?: number;
+            criteria?: Record<string, unknown>;
         }>;
         supplyPatterns: Array<{
             keywords: string[];
-            criteria: { modelId: string };
+            minTrustScore?: number;
+            contextLevel?: number;
         }>;
-        owner: string;
+        matchingLogic?: string;
+        minMatchScore?: number;
+        metadata?: Map<string, string>;
+        creator?: import('@refinio/one.core/lib/util/type-checks.js').SHA256IdHash<import('@refinio/one.core/lib/recipes.js').Person>;
         created: number;
-        modified: number;
-        status: string;
+        modified?: number;
+        status?: string;
+        domain?: string;  // Domain this plan applies to
     }
 
-    export interface CubeAssembly {
-        $type$: 'CubeAssembly';
-        aiAssistantCall: string; // References AssemblyPlan IdHash
-        property: string; // ID property - which property this captures
-        supply: any;
-        demand: any;
-        instanceVersion: any;
-        children: any;
-        plan: string; // References AssemblyPlan IdHash
-        owner: string;
+    /**
+     * Story - Immutable audit record of what happened
+     *
+     * Story documents:
+     * - plan: Which Plan was executed
+     * - product: What was created (any ONE object)
+     * - owner: Who created this
+     * - created/duration: When and how long
+     */
+    export interface Story {
+        $type$: 'Story';
+        id: string;  // ID property
+        title: string;
+        plan: import('@refinio/one.core/lib/util/type-checks.js').SHA256IdHash<Plan>;
+        product: import('@refinio/one.core/lib/util/type-checks.js').SHA256Hash<any>;  // The actual result object
+        instanceVersion: string;
         created: number;
-        modified: number;
+        duration?: number;
+        owner?: import('@refinio/one.core/lib/util/type-checks.js').SHA256IdHash<import('@refinio/one.core/lib/recipes.js').Person>;
+    }
+
+    /**
+     * Assembly - Entity version history container
+     *
+     * Assembly provides:
+     * - entity: The entity being tracked (ID property) - any ID object type
+     * - storyRef: The Story documenting what changed in this version
+     *
+     * Each update creates a new Assembly version with the same entity
+     * but potentially different storyRef.
+     */
+    export interface Assembly {
+        $type$: 'Assembly';
+        /** Entity reference - ID property (tracks any ID object over time) */
+        entity: import('@refinio/one.core/lib/util/type-checks.js').SHA256IdHash<any>;
+        /** Story reference - what changed in this version */
+        storyRef: import('@refinio/one.core/lib/util/type-checks.js').SHA256IdHash<Story>;
+        /** Creation timestamp */
+        created: number;
+        /** Optional display title (overrides Story.title for display) */
+        title?: string;
     }
 }

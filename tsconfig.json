@@ -18,7 +18,10 @@
     "resolveJsonModule": true,
     "noImplicitAny": false,
     "baseUrl": ".",
-    "types": []
+    "types": [],
+    "paths": {
+      "@lama/core/*": ["../lama.core/dist/lama.core/*"]
+    }
   },
   "include": ["src/**/*.ts", "src/**/*.d.ts"],
   "exclude": ["node_modules", "dist", "**/*.js", "src/initialization/**/*", "../lama.core"]

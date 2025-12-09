@@ -49,6 +49,12 @@
     "lama",
     "one.core"
   ],
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "package.json"
+  ],
   "author": "",
   "license": "MIT"
 }
