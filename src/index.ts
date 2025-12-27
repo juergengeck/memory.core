@@ -14,6 +14,8 @@
 // Plans
 export * from './plans/ChatMemoryPlan.js';
 export * from './plans/MemoryPlan.js';
+export * from './plans/MemoryImportPlan.js';
+export * from './plans/MemoryExportPlan.js';
 export * from './plans/SubjectMemoryPlan.js';
 
 // Initialization
