@@ -17,6 +17,7 @@ export * from './plans/MemoryPlan.js';
 export * from './plans/MemoryImportPlan.js';
 export * from './plans/MemoryExportPlan.js';
 export * from './plans/SubjectMemoryPlan.js';
+export * from './plans/IngestionPlan.js';
 
 // Initialization
 // NOTE: Subject management now uses lama.core's SubjectsPlan directly.
