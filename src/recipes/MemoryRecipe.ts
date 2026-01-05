@@ -99,6 +99,35 @@ export const MemoryRecipe = {
                 type: 'array',
                 item: { type: 'string' }
             }
+        },
+        // Summary - concise 1-2 sentence synopsis
+        {
+            itemprop: 'summary',
+            itemtype: { type: 'string' },
+            optional: true
+        },
+        // Related subjects - semantically linked but not sources
+        {
+            itemprop: 'relatedSubjects',
+            itemtype: {
+                type: 'array',
+                item: { type: 'string' }
+            },
+            optional: true
+        },
+        // Semantic embedding - inline for portability, meaning.core indexes externally
+        {
+            itemprop: 'embedding',
+            itemtype: {
+                type: 'array',
+                item: { type: 'number' }
+            },
+            optional: true
+        },
+        {
+            itemprop: 'embeddingModel',
+            itemtype: { type: 'string' },
+            optional: true
         }
     ]
 };

@@ -152,7 +152,7 @@ declare module '@OneObjectInterfaces' {
         aiId: string; // ID field - AI identifier (e.g., "started-as-gpt-oss-20b")
         displayName: string;
         personId: string; // AI Person ID
-        llmProfileId: string; // LLM Profile ID hash that this AI delegates to
+        llmId?: string; // Optional LLM ID hash (undefined = use app default)
         modelId: string; // Model identifier (e.g., "gpt-oss:20b")
         owner: string; // Owner Person/Instance ID
         created: number;

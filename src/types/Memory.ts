@@ -8,7 +8,8 @@
  * Identity: title + author (both isId: true in recipe)
  */
 
-import type { SHA256IdHash } from '@refinio/one.core/lib/util/type-checks.js';
+import type { SHA256Hash, SHA256IdHash } from '@refinio/one.core/lib/util/type-checks.js';
+import type { EmbeddingModel } from '@cube/meaning.core';
 
 /**
  * Fact - An extracted assertion from source content
@@ -55,6 +56,16 @@ export interface Memory {
     // Prose content
     prose: string;  // Synthesized narrative (markdown)
 
+    // Summary - concise 1-2 sentence synopsis
+    summary?: string;
+
     // Source subjects this memory was constructed from
     sourceSubjects: string[];  // Array of SHA256IdHash<Subject>
+
+    // Related subjects - semantically linked but not sources
+    relatedSubjects?: string[];  // Array of SHA256IdHash<Subject>
+
+    // Semantic embedding - inline for portability, meaning.core indexes externally
+    embedding?: number[];
+    embeddingModel?: EmbeddingModel;
 }

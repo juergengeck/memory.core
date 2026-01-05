@@ -6,6 +6,7 @@
  */
 
 import type { Memory, Fact, Entity, Relationship } from '../types/Memory.js';
+import type { EmbeddingModel } from '@cube/meaning.core';
 
 export interface MemoryPlanDependencies {
     storeVersionedObject: (obj: any) => Promise<{ idHash: string; hash: string }>;
@@ -29,6 +30,11 @@ export class MemoryPlan {
         entities: Entity[];
         relationships: Relationship[];
         prose: string;
+        // New fields
+        summary?: string;
+        relatedSubjects?: string[];
+        embedding?: number[];
+        embeddingModel?: EmbeddingModel;
     }): Promise<{ idHash: string; memory: Memory }> {
         const author = await this.deps.getInstanceOwner();
 
@@ -40,7 +46,12 @@ export class MemoryPlan {
             entities: params.entities,
             relationships: params.relationships,
             prose: params.prose,
-            sourceSubjects: params.sourceSubjects
+            sourceSubjects: params.sourceSubjects,
+            // New fields
+            summary: params.summary,
+            relatedSubjects: params.relatedSubjects,
+            embedding: params.embedding,
+            embeddingModel: params.embeddingModel
         };
 
         const result = await this.deps.storeVersionedObject(memory);
@@ -59,6 +70,35 @@ export class MemoryPlan {
     async getMemory(idHash: string): Promise<Memory | undefined> {
         const result = await this.deps.getObjectByIdHash(idHash);
         return result?.obj as Memory | undefined;
+    }
+
+    /**
+     * Update a Memory with new fields
+     */
+    async updateMemory(params: {
+        idHash: string;
+        updates: {
+            summary?: string;
+            relatedSubjects?: string[];
+            embedding?: number[];
+            embeddingModel?: EmbeddingModel;
+        };
+    }): Promise<{ idHash: string; memory: Memory }> {
+        const existing = await this.getMemory(params.idHash);
+        if (!existing) {
+            throw new Error(`Memory not found: ${params.idHash}`);
+        }
+
+        const updated: Memory = {
+            ...existing,
+            summary: params.updates.summary ?? existing.summary,
+            relatedSubjects: params.updates.relatedSubjects ?? existing.relatedSubjects,
+            embedding: params.updates.embedding ?? existing.embedding,
+            embeddingModel: params.updates.embeddingModel ?? existing.embeddingModel
+        };
+
+        const result = await this.deps.storeVersionedObject(updated);
+        return { idHash: result.idHash, memory: updated };
     }
 
     /**

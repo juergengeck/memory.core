@@ -18,6 +18,27 @@ import { keywordsToHashes } from '../../../lama.core/one-ai/models/Keyword.js';
 // Re-export SubjectSource for migration code
 export type { SubjectSource };
 
+/**
+ * Tool definition for MCP/PlanRegistry
+ */
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  inputSchema: {
+    type: 'object';
+    properties: Record<string, { type: string; description: string; default?: any }>;
+    required?: string[];
+  };
+}
+
+/**
+ * MCP-formatted tool result
+ */
+export interface ToolResult {
+  content: Array<{ type: 'text'; text: string }>;
+  isError?: boolean;
+}
+
 export interface CreateSubjectParams {
   id: string;
   description: string;              // Use description instead of name (matches Subject schema)
@@ -44,6 +65,40 @@ export interface StoreAssemblyResult {
 // Subject is now the canonical type - no more SubjectAssembly duplication!
 
 /**
+ * Optional dependencies for extended memory operations
+ * These enable message retrieval tools when provided
+ */
+export interface ExtendedMemoryDependencies {
+  /** TopicModel for entering rooms and retrieving messages */
+  topicModel?: {
+    enterTopicRoom(topicId: string): Promise<{
+      retrieveAllMessages(): Promise<any[]>;
+    }>;
+  };
+  /** MemoryStorageHandler for storing memory assemblies */
+  memoryStorageHandler?: {
+    storeMemory(params: {
+      content: string;
+      memoryType: string;
+      category?: string;
+      topicRef: string;
+    }): Promise<{
+      success: boolean;
+      error?: string;
+      memoryHash?: string;
+      assemblyHash?: string;
+      filename?: string;
+      keywords?: string[];
+      subjects?: string[];
+    }>;
+  };
+  /** AIAssistantModel for checking if sender is AI */
+  aiAssistantModel?: {
+    isAIPerson(personId: any): boolean;
+  };
+}
+
+/**
  * Subject Memory Plan
  *
  * Global memory storage and retrieval (chat-agnostic)
@@ -55,12 +110,18 @@ export interface StoreAssemblyResult {
  * - Source tracking for multi-chat subjects
  * - Backward compatible with chat-scoped IDs
  *
+ * Phase 3 Enhancements (Tool Integration):
+ * - getToolDefinitions() for MCP/PlanRegistry discovery
+ * - executeTool() for unified tool execution
+ * - All memory tools can be used locally AND via MCP
+ *
  * NOTE: This manages Subject objects. For Memory document operations, see MemoryPlan.
  */
 export class SubjectMemoryPlan {
   private index: SubjectIndex;
   private indexInitialized: boolean = false;
   private subjectCache: Map<string, Subject> = new Map(); // idHash -> subject
+  private extendedDeps: ExtendedMemoryDependencies = {};
 
   constructor(
     private subjectPlan: any,
@@ -69,6 +130,104 @@ export class SubjectMemoryPlan {
   ) {
     this.index = new SubjectIndex();
     // Index will be built lazily on first search or explicitly via buildIndex()
+  }
+
+  /**
+   * Set extended dependencies for message retrieval operations
+   * Call this after construction to enable full tool support
+   */
+  setExtendedDependencies(deps: ExtendedMemoryDependencies): void {
+    this.extendedDeps = { ...this.extendedDeps, ...deps };
+  }
+
+  /**
+   * Get tool definitions for MCP/PlanRegistry discovery
+   * These are the same tools exposed via MCPManager but can also be called locally
+   */
+  getToolDefinitions(): ToolDefinition[] {
+    return [
+      {
+        name: 'memory_context',
+        description: 'PROACTIVE TOOL: Call BEFORE responding to get relevant memories based on keywords in the user\'s message. Automatically extracts keywords and finds matching subjects.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            message: { type: 'string', description: 'The user\'s message to extract keywords from' },
+            limit: { type: 'number', description: 'Maximum memory items to return', default: 5 }
+          },
+          required: ['message']
+        }
+      },
+      {
+        name: 'memory_store',
+        description: 'Store a new memory (insight, learning, or important information) to long-term memory.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            content: { type: 'string', description: 'The memory content to store' },
+            category: { type: 'string', description: 'Optional category for organizing memories' }
+          },
+          required: ['content']
+        }
+      },
+      {
+        name: 'memory_search',
+        description: 'Search conversation history for relevant past discussions.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'Search query - keywords or concepts' },
+            limit: { type: 'number', description: 'Maximum messages to return', default: 10 }
+          },
+          required: ['query']
+        }
+      },
+      {
+        name: 'memory_recent',
+        description: 'Get most recent memories from the LAMA topic.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            count: { type: 'number', description: 'Number of recent messages', default: 20 }
+          }
+        }
+      },
+      {
+        name: 'memory_subjects',
+        description: 'Get subjects and themes learned across all conversations.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            topicId: { type: 'string', description: 'Optional: Get subjects for specific topic' }
+          }
+        }
+      },
+      {
+        name: 'subject_get-messages',
+        description: 'Get full message history for a specific subject.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            subject: { type: 'string', description: 'The subject name' },
+            limit: { type: 'number', description: 'Maximum messages to return', default: 50 }
+          },
+          required: ['subject']
+        }
+      },
+      {
+        name: 'subject_search',
+        description: 'Search within a specific subject for relevant messages.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            subject: { type: 'string', description: 'The subject to search within' },
+            query: { type: 'string', description: 'Keywords to search for' },
+            limit: { type: 'number', description: 'Maximum messages to return', default: 20 }
+          },
+          required: ['subject', 'query']
+        }
+      }
+    ];
   }
 
   /**
@@ -495,5 +654,379 @@ export class SubjectMemoryPlan {
    */
   private async convertKeywordsToHashes(keywords: string[]): Promise<any[]> {
     return await keywordsToHashes(keywords);
+  }
+
+  // ============================================================================
+  // Tool Execution Methods (Phase 3: Unified local/MCP tool support)
+  // ============================================================================
+
+  /**
+   * Execute a tool by name
+   * Unified dispatcher for both local and MCP invocations
+   *
+   * @param toolName Tool name (e.g., 'memory_context')
+   * @param params Tool parameters
+   * @returns MCP-formatted result
+   */
+  async executeTool(toolName: string, params: Record<string, any>): Promise<ToolResult> {
+    try {
+      switch (toolName) {
+        case 'memory_context':
+          return await this.toolMemoryContext(params.message, params.limit || 5);
+
+        case 'memory_store':
+          return await this.toolMemoryStore(params.content, params.category);
+
+        case 'memory_search':
+          return await this.toolMemorySearch(params.query, params.limit || 10);
+
+        case 'memory_recent':
+          return await this.toolMemoryRecent(params.count || 20);
+
+        case 'memory_subjects':
+          return await this.toolMemorySubjects(params.topicId);
+
+        case 'subject_get-messages':
+          return await this.toolSubjectGetMessages(params.subject, params.limit || 50);
+
+        case 'subject_search':
+          return await this.toolSubjectSearch(params.subject, params.query, params.limit || 20);
+
+        default:
+          return {
+            content: [{ type: 'text', text: `Unknown tool: ${toolName}` }],
+            isError: true
+          };
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        content: [{ type: 'text', text: `Tool execution failed: ${message}` }],
+        isError: true
+      };
+    }
+  }
+
+  /**
+   * Tool: memory_context
+   * Get relevant context for a message (wraps getContextForMessage)
+   */
+  private async toolMemoryContext(message: string, limit: number): Promise<ToolResult> {
+    const result = await this.getContextForMessage(message, limit);
+
+    if (result.subjects.length === 0) {
+      return {
+        content: [{
+          type: 'text',
+          text: result.keywords.length > 0
+            ? `Keywords found: ${result.keywords.join(', ')}\n\nNo existing memories for these keywords - new context.`
+            : 'No keywords extracted from message - no relevant context.'
+        }]
+      };
+    }
+
+    let contextText = `# Relevant Context\n\n`;
+    contextText += `Keywords: ${result.keywords.join(', ')}\n\n`;
+    contextText += `Found ${result.subjects.length} relevant subjects:\n\n`;
+
+    for (const { subject, matchingKeywords } of result.subjects) {
+      contextText += `## ${subject.keywordCombination || subject.name || subject.description}\n`;
+      contextText += `**Keywords**: ${subject.keywords?.join(', ') || 'none'}\n`;
+      contextText += `**Description**: ${subject.description || 'no description'}\n`;
+      contextText += `**Matching**: ${matchingKeywords.join(', ')}\n\n`;
+    }
+
+    return { content: [{ type: 'text', text: contextText }] };
+  }
+
+  /**
+   * Tool: memory_store
+   * Store a new memory via MemoryStorageHandler
+   */
+  private async toolMemoryStore(content: string, category?: string): Promise<ToolResult> {
+    if (!this.extendedDeps.memoryStorageHandler) {
+      return {
+        content: [{ type: 'text', text: 'Memory storage not available - extended dependencies not set' }],
+        isError: true
+      };
+    }
+
+    const result = await this.extendedDeps.memoryStorageHandler.storeMemory({
+      content,
+      memoryType: category || 'note',
+      category,
+      topicRef: 'lama'
+    });
+
+    if (!result.success) {
+      return {
+        content: [{ type: 'text', text: result.error || 'Failed to store memory' }],
+        isError: true
+      };
+    }
+
+    return {
+      content: [{
+        type: 'text',
+        text: `Memory stored successfully\nHash: ${result.memoryHash}\nKeywords: ${result.keywords?.join(', ') || 'none'}\nSubjects: ${result.subjects?.join(', ') || 'none'}`
+      }]
+    };
+  }
+
+  /**
+   * Tool: memory_search
+   * Search LAMA topic for relevant messages
+   */
+  private async toolMemorySearch(query: string, limit: number): Promise<ToolResult> {
+    if (!this.extendedDeps.topicModel) {
+      return {
+        content: [{ type: 'text', text: 'Topic model not available - extended dependencies not set' }],
+        isError: true
+      };
+    }
+
+    const topicRoom = await this.extendedDeps.topicModel.enterTopicRoom('lama');
+    const allMessages = await topicRoom.retrieveAllMessages();
+
+    const queryLower = query.toLowerCase();
+    const matches = allMessages
+      .filter((msg: any) => {
+        const text = msg.data?.text || msg.text || '';
+        return text.toLowerCase().includes(queryLower);
+      })
+      .slice(-limit);
+
+    if (matches.length === 0) {
+      return { content: [{ type: 'text', text: `No memories found matching "${query}"` }] };
+    }
+
+    const results = matches.map((msg: any, idx: number) => {
+      const text = msg.data?.text || msg.text || '';
+      const timestamp = msg.data?.timestamp || msg.timestamp || 'unknown';
+      return `[${idx + 1}] ${timestamp}\n${text}\n`;
+    }).join('\n---\n\n');
+
+    return { content: [{ type: 'text', text: `Found ${matches.length} relevant memories:\n\n${results}` }] };
+  }
+
+  /**
+   * Tool: memory_recent
+   * Get recent messages from LAMA topic
+   */
+  private async toolMemoryRecent(count: number): Promise<ToolResult> {
+    if (!this.extendedDeps.topicModel) {
+      return {
+        content: [{ type: 'text', text: 'Topic model not available - extended dependencies not set' }],
+        isError: true
+      };
+    }
+
+    const topicRoom = await this.extendedDeps.topicModel.enterTopicRoom('lama');
+    const allMessages = await topicRoom.retrieveAllMessages();
+    const recent = allMessages.slice(-count);
+
+    if (recent.length === 0) {
+      return { content: [{ type: 'text', text: 'No memories yet - this is the beginning of your memory.' }] };
+    }
+
+    const results = recent.map((msg: any, idx: number) => {
+      const text = msg.data?.text || msg.text || '';
+      const timestamp = msg.data?.timestamp || msg.timestamp || 'unknown';
+      const sender = msg.data?.sender || msg.author;
+      const isAI = this.extendedDeps.aiAssistantModel?.isAIPerson(sender);
+      const role = isAI ? 'You' : 'User';
+      return `[${idx + 1}] ${timestamp} - ${role}:\n${text}\n`;
+    }).join('\n---\n\n');
+
+    return { content: [{ type: 'text', text: `Your ${recent.length} most recent memories:\n\n${results}` }] };
+  }
+
+  /**
+   * Tool: memory_subjects
+   * Get subjects across conversations
+   */
+  private async toolMemorySubjects(topicId?: string): Promise<ToolResult> {
+    if (!this.topicAnalysisModel) {
+      return {
+        content: [{ type: 'text', text: 'Topic analysis not available - cannot retrieve subjects' }],
+        isError: true
+      };
+    }
+
+    let subjects: Subject[];
+    if (topicId) {
+      subjects = await this.topicAnalysisModel.getSubjects(topicId);
+    } else {
+      // Get all subjects from all topics
+      const allChannels = this.channelManager
+        ? await this.channelManager.getMatchingChannelInfos()
+        : [];
+      subjects = [];
+
+      for (const channel of allChannels) {
+        try {
+          const topicSubjects = await this.topicAnalysisModel.getSubjects(channel.id);
+          subjects.push(...topicSubjects);
+        } catch (e) {
+          // Skip topics without subjects
+        }
+      }
+    }
+
+    if (!subjects || subjects.length === 0) {
+      return {
+        content: [{
+          type: 'text',
+          text: topicId
+            ? `No subjects found for topic ${topicId}`
+            : 'No subjects learned yet across any conversations'
+        }]
+      };
+    }
+
+    const activeSubjects = subjects.filter((s: any) => !s.archived);
+    const formatted = activeSubjects.map((subject: any, idx: number) => {
+      const keywords = subject.keywords?.join(', ') || 'no keywords';
+      const desc = subject.description || 'no description';
+      return `[${idx + 1}] ${subject.keywordCombination || subject.name}\n   Keywords: ${keywords}\n   ${desc}`;
+    }).join('\n\n');
+
+    return { content: [{ type: 'text', text: `You have context for ${activeSubjects.length} subjects:\n\n${formatted}` }] };
+  }
+
+  /**
+   * Tool: subject_get-messages
+   * Get messages for a specific subject
+   */
+  private async toolSubjectGetMessages(subjectName: string, limit: number): Promise<ToolResult> {
+    if (!this.topicAnalysisModel || !this.extendedDeps.topicModel) {
+      return {
+        content: [{ type: 'text', text: 'Required dependencies not available' }],
+        isError: true
+      };
+    }
+
+    // Find subject by name
+    const allChannels = this.channelManager
+      ? await this.channelManager.getMatchingChannelInfos()
+      : [];
+    let targetSubject: Subject | null = null;
+    let targetTopicId: string | null = null;
+
+    for (const channel of allChannels) {
+      try {
+        const subjects = await this.topicAnalysisModel.getSubjects(channel.id);
+        const found = subjects.find((s: any) =>
+          (s.name === subjectName || s.keywordCombination === subjectName) && !s.archived
+        );
+        if (found) {
+          targetSubject = found;
+          targetTopicId = channel.id;
+          break;
+        }
+      } catch (e) {
+        // Skip
+      }
+    }
+
+    if (!targetSubject || !targetTopicId) {
+      return { content: [{ type: 'text', text: `Subject "${subjectName}" not found` }] };
+    }
+
+    const topicRoom = await this.extendedDeps.topicModel.enterTopicRoom(targetTopicId);
+    const allMessages = await topicRoom.retrieveAllMessages();
+
+    const keywords = (targetSubject as any).keywords || [];
+    const relevantMessages = allMessages
+      .filter((msg: any) => {
+        const text = (msg.data?.text || msg.text || '').toLowerCase();
+        return keywords.some((kw: string) => text.includes(kw.toLowerCase()));
+      })
+      .slice(-limit);
+
+    if (relevantMessages.length === 0) {
+      return { content: [{ type: 'text', text: `No messages found for subject "${subjectName}"` }] };
+    }
+
+    const formatted = relevantMessages.map((msg: any, idx: number) => {
+      const text = msg.data?.text || msg.text || '';
+      const timestamp = msg.data?.timestamp || msg.timestamp;
+      const sender = msg.data?.sender || msg.author;
+      const isAI = this.extendedDeps.aiAssistantModel?.isAIPerson(sender);
+      const role = isAI ? 'Assistant' : 'User';
+      return `[${idx + 1}] ${timestamp || 'unknown'} - ${role}:\n${text}`;
+    }).join('\n\n---\n\n');
+
+    return { content: [{ type: 'text', text: `Messages for "${subjectName}" (${relevantMessages.length}):\n\n${formatted}` }] };
+  }
+
+  /**
+   * Tool: subject_search
+   * Search within a specific subject
+   */
+  private async toolSubjectSearch(subjectName: string, query: string, limit: number): Promise<ToolResult> {
+    if (!this.topicAnalysisModel || !this.extendedDeps.topicModel) {
+      return {
+        content: [{ type: 'text', text: 'Required dependencies not available' }],
+        isError: true
+      };
+    }
+
+    // Find subject by name
+    const allChannels = this.channelManager
+      ? await this.channelManager.getMatchingChannelInfos()
+      : [];
+    let targetSubject: Subject | null = null;
+    let targetTopicId: string | null = null;
+
+    for (const channel of allChannels) {
+      try {
+        const subjects = await this.topicAnalysisModel.getSubjects(channel.id);
+        const found = subjects.find((s: any) =>
+          (s.name === subjectName || s.keywordCombination === subjectName) && !s.archived
+        );
+        if (found) {
+          targetSubject = found;
+          targetTopicId = channel.id;
+          break;
+        }
+      } catch (e) {
+        // Skip
+      }
+    }
+
+    if (!targetSubject || !targetTopicId) {
+      return { content: [{ type: 'text', text: `Subject "${subjectName}" not found` }] };
+    }
+
+    const topicRoom = await this.extendedDeps.topicModel.enterTopicRoom(targetTopicId);
+    const allMessages = await topicRoom.retrieveAllMessages();
+
+    const keywords = (targetSubject as any).keywords || [];
+    const queryLower = query.toLowerCase();
+
+    const relevantMessages = allMessages
+      .filter((msg: any) => {
+        const text = (msg.data?.text || msg.text || '').toLowerCase();
+        const matchesSubject = keywords.some((kw: string) => text.includes(kw.toLowerCase()));
+        const matchesQuery = text.includes(queryLower);
+        return matchesSubject && matchesQuery;
+      })
+      .slice(-limit);
+
+    if (relevantMessages.length === 0) {
+      return { content: [{ type: 'text', text: `No messages in "${subjectName}" matching "${query}"` }] };
+    }
+
+    const formatted = relevantMessages.map((msg: any, idx: number) => {
+      const text = msg.data?.text || msg.text || '';
+      const timestamp = msg.data?.timestamp || msg.timestamp;
+      const sender = msg.data?.sender || msg.author;
+      const isAI = this.extendedDeps.aiAssistantModel?.isAIPerson(sender);
+      const role = isAI ? 'Assistant' : 'User';
+      return `[${idx + 1}] ${timestamp || 'unknown'} - ${role}:\n${text}`;
+    }).join('\n\n---\n\n');
+
+    return { content: [{ type: 'text', text: `Search "${query}" in "${subjectName}" (${relevantMessages.length}):\n\n${formatted}` }] };
   }
 }
