@@ -39,4 +39,5 @@ export * from './types/Memory.js';
 
 // Recipes
 export * from './recipes/ChatMemoryConfig.js';
+export * from './recipes/ChatMemoryAssociation.js';
 export * from './recipes/MemoryRecipe.js';

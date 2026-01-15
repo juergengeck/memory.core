@@ -15,25 +15,45 @@ import type {
   FindRelatedMemoriesResponse
 } from '../types/chat-memory-types.js';
 
+/**
+ * Embedding provider interface for semantic search
+ */
+export interface EmbeddingProvider {
+  readonly model: string;
+  embed(text: string): Promise<number[]>;
+  embedBatch(texts: string[]): Promise<number[][]>;
+}
+
 export interface ChatMemoryServiceDependencies {
   nodeOneCore: any;
   topicAnalyzer?: any;            // From one-ai for subject extraction
   memoryPlan?: any;               // MemoryPlan for storing subjects
   storeVersionedObject?: any;     // For storing associations
   getObjectByIdHash?: any;        // For retrieving associations
+  embeddingProvider?: EmbeddingProvider;  // For semantic similarity search
 }
 
 /**
  * ChatMemoryService
  *
  * Automatically extracts subjects from chat messages and stores them as memories.
- * Provides keyword-based retrieval and association management.
+ * Provides semantic (embedding-based) and keyword-based retrieval.
  */
 export class ChatMemoryService {
   private configs: Map<string, ChatMemoryConfig> = new Map();
   private associations: Map<string, ChatMemoryAssociation[]> = new Map();
 
+  // Embedding cache: subjectIdHash -> embedding vector
+  private embeddingCache: Map<string, number[]> = new Map();
+
   constructor(private deps: ChatMemoryServiceDependencies) {}
+
+  /**
+   * Check if semantic search is available
+   */
+  get hasSemanticSearch(): boolean {
+    return !!this.deps.embeddingProvider;
+  }
 
   /**
    * Enable memory extraction for a topic
@@ -129,11 +149,18 @@ export class ChatMemoryService {
 
     for (const message of messages) {
       try {
+        // ObjectData wraps the actual message in .data property
+        const msgData = (message as any).data || message;
+        const messageText = msgData.text || msgData.content || message.text || message.content;
+        console.log('[ChatMemoryService] Extracting keywords from message:', messageText?.substring(0, 100));
+
         // Extract keywords from message content
         const keywords = await this.deps.topicAnalyzer.extractKeywords(
-          message.text || message.content,
+          messageText,
           10 // max keywords per message
         );
+
+        console.log('[ChatMemoryService] Extracted keywords:', keywords);
 
         if (keywords && keywords.length > 0) {
           // Track keyword frequency
@@ -147,20 +174,21 @@ export class ChatMemoryService {
           const topKeywords = keywords.slice(0, 3);
           const subjectName = topKeywords.join(' ');
 
-          // Calculate confidence based on keyword frequency
-          const avgFreq = topKeywords.reduce((sum, kw) => {
-            return sum + (allKeywords.get(String(kw).toLowerCase()) || 1);
-          }, 0) / topKeywords.length;
-          const confidence = Math.min(avgFreq / messages.length, 1.0);
+          // Calculate confidence based on keyword count and quality
+          // Keywords extracted = high confidence in that message's relevance
+          const keywordCount = keywords.length;
+          const confidence = Math.min(keywordCount / 10, 1.0);  // 10 keywords = max confidence
 
-          // Filter by minimum confidence
-          if (confidence >= (config?.minConfidence ?? 0.5)) {
+          console.log('[ChatMemoryService] Subject:', subjectName, 'confidence:', confidence);
+
+          // Filter by minimum confidence (default 0.1 - any extracted keywords are useful)
+          if (confidence >= (config?.minConfidence ?? 0.1)) {
             extractedSubjects.push({
               name: subjectName,
               keywords: topKeywords.map(k => String(k)),
               confidence,
-              description: this.getExcerpt(message.text || message.content, 150),
-              messageExcerpt: this.getExcerpt(message.text || message.content, 200)
+              description: this.getExcerpt(messageText, 150),
+              messageExcerpt: this.getExcerpt(messageText, 200)
             });
           }
         }
@@ -184,7 +212,8 @@ export class ChatMemoryService {
   }
 
   /**
-   * Find related memories by keywords
+   * Find related memories by semantic similarity or keywords
+   * Uses embedding-based search when provider available, falls back to keywords
    */
   async findRelatedMemories(
     request: FindRelatedMemoriesRequest
@@ -193,9 +222,25 @@ export class ChatMemoryService {
       throw new Error('Memory plan not available');
     }
 
+    // Ensure keywords is always an array (MCP may pass comma-separated string)
+    let keywords: string[] = request.keywords;
+    if (!Array.isArray(keywords)) {
+      if (typeof keywords === 'string') {
+        keywords = (keywords as string).split(',').map(k => k.trim()).filter(k => k.length > 0);
+      } else {
+        keywords = [];
+      }
+    }
+
     const allSubjectIds = await this.deps.memoryPlan.listSubjects();
     const relatedMemories: RelatedMemory[] = [];
 
+    // Use semantic search if embedding provider available
+    if (this.deps.embeddingProvider && keywords.length > 0) {
+      return this.findBySemanticSimilarity(keywords, allSubjectIds, request);
+    }
+
+    // Fallback to keyword-based search
     for (const idHash of allSubjectIds) {
       const subject = await this.deps.memoryPlan.getSubject(idHash);
 
@@ -204,7 +249,7 @@ export class ChatMemoryService {
       // Calculate relevance score based on keyword overlap
       const subjectKeywords = this.extractKeywordsFromSubject(subject);
       const relevanceScore = this.calculateRelevance(
-        request.keywords,
+        keywords,
         subjectKeywords
       );
 
@@ -229,7 +274,7 @@ export class ChatMemoryService {
 
     return {
       memories: limited,
-      searchKeywords: request.keywords,
+      searchKeywords: keywords,
       totalFound: relatedMemories.length
     };
   }
@@ -295,38 +340,34 @@ export class ChatMemoryService {
     messageIds?: SHA256Hash<any>[],
     limit?: number
   ): Promise<any[]> {
-    if (!this.deps.nodeOneCore?.channelManager) {
-      throw new Error('ChannelManager not available');
+    const { topicModel, leuteModel, channelManager } = this.deps.nodeOneCore || {};
+    if (!topicModel || !leuteModel || !channelManager) {
+      throw new Error('TopicModel, LeuteModel, or ChannelManager not available');
     }
 
     try {
-      // Get channel entries for this topic
-      const entries = await this.deps.nodeOneCore.channelManager.getChannelEntries(topicId);
+      // Find topic
+      const topic = await topicModel.findTopic(topicId);
+      if (!topic) {
+        console.warn(`[ChatMemoryService] Topic not found: ${topicId}`);
+        return [];
+      }
 
-      // Filter to messages only (exclude MessageAttestation, etc.)
-      let messages = entries
-        .filter((entry: any) => entry.data && entry.data.$type$ !== 'MessageAttestation')
-        .map((entry: any) => ({
-          hash: entry.hash,
-          id: entry.hash,
-          content: entry.data.content || entry.data.text || '',
-          text: entry.data.text || entry.data.content || '',
-          timestamp: entry.timestamp || entry.data.timestamp,
-          author: entry.author || entry.data.sender
-        }));
+      // Import TopicRoom dynamically to avoid circular deps
+      const { default: TopicRoom } = await import('@refinio/one.models/lib/models/Chat/TopicRoom.js');
+      const topicRoom = new TopicRoom(topic, channelManager, leuteModel);
+
+      // Retrieve all messages - ObjectData<ChatMessage>[] with proper typing from ONE.core
+      let messages = await topicRoom.retrieveAllMessages();
 
       // Filter by specific message IDs if provided
       if (messageIds && messageIds.length > 0) {
         const idSet = new Set(messageIds);
-        messages = messages.filter((m: any) => idSet.has(m.hash));
+        messages = messages.filter((m: any) => idSet.has(m.dataHash));
       }
 
-      // Sort by timestamp (newest first)
-      messages.sort((a: any, b: any) => {
-        const timeA = new Date(a.timestamp).getTime();
-        const timeB = new Date(b.timestamp).getTime();
-        return timeB - timeA;
-      });
+      // Sort by creationTime (newest first) - ObjectData has creationTime property
+      messages.sort((a: any, b: any) => (b.creationTime || 0) - (a.creationTime || 0));
 
       // Apply limit if specified
       if (limit && limit > 0) {
@@ -467,5 +508,98 @@ export class ChatMemoryService {
         await this.deps.storeVersionedObject(existing);
       }
     }
+  }
+
+  /**
+   * Find memories by semantic similarity using embeddings
+   * Computes cosine similarity between query and subject embeddings
+   */
+  private async findBySemanticSimilarity(
+    keywords: string[],
+    allSubjectIds: string[],
+    request: FindRelatedMemoriesRequest
+  ): Promise<FindRelatedMemoriesResponse> {
+    const embeddingProvider = this.deps.embeddingProvider!;
+    const relatedMemories: RelatedMemory[] = [];
+
+    // Create query text from keywords
+    const queryText = keywords.join(' ');
+
+    // Get query embedding
+    const queryEmbedding = await embeddingProvider.embed(queryText);
+
+    // Get all subjects and their embeddings
+    for (const idHash of allSubjectIds) {
+      const subject = await this.deps.memoryPlan!.getSubject(idHash);
+      if (!subject) continue;
+
+      // Get or compute subject embedding
+      let subjectEmbedding = this.embeddingCache.get(idHash);
+      if (!subjectEmbedding) {
+        // Create text from subject for embedding
+        const subjectText = [
+          subject.name,
+          subject.description,
+          this.extractKeywordsFromSubject(subject).join(' ')
+        ].filter(Boolean).join(' ');
+
+        subjectEmbedding = await embeddingProvider.embed(subjectText);
+        this.embeddingCache.set(idHash, subjectEmbedding);
+      }
+
+      // Calculate cosine similarity
+      const similarity = this.cosineSimilarity(queryEmbedding, subjectEmbedding);
+
+      if (similarity >= (request.minRelevance ?? 0.3)) {
+        relatedMemories.push({
+          subjectIdHash: idHash as any,
+          name: subject.name,
+          keywords: this.extractKeywordsFromSubject(subject),
+          relevanceScore: similarity,
+          lastUpdated: subject.modified ?? subject.created
+        });
+      }
+    }
+
+    // Sort by similarity (descending)
+    relatedMemories.sort((a, b) => b.relevanceScore - a.relevanceScore);
+
+    // Limit results
+    const limited = request.limit
+      ? relatedMemories.slice(0, request.limit)
+      : relatedMemories;
+
+    return {
+      memories: limited,
+      searchKeywords: keywords,
+      totalFound: relatedMemories.length
+    };
+  }
+
+  /**
+   * Calculate cosine similarity between two vectors
+   */
+  private cosineSimilarity(a: number[], b: number[]): number {
+    if (a.length !== b.length) return 0;
+
+    let dotProduct = 0;
+    let normA = 0;
+    let normB = 0;
+
+    for (let i = 0; i < a.length; i++) {
+      dotProduct += a[i] * b[i];
+      normA += a[i] * a[i];
+      normB += b[i] * b[i];
+    }
+
+    const magnitude = Math.sqrt(normA) * Math.sqrt(normB);
+    return magnitude === 0 ? 0 : dotProduct / magnitude;
+  }
+
+  /**
+   * Clear embedding cache (call when subjects change)
+   */
+  clearEmbeddingCache(): void {
+    this.embeddingCache.clear();
   }
 }

@@ -285,7 +285,7 @@ export class IngestionPlan {
       // Post system instruction as AI message to trigger extraction
       // AI posts to its own channel (owned by AI, shared with group participants)
       const systemMessage = `I'll analyze this document and extract key knowledge for your memory.\n\n${INGESTION_SYSTEM_PROMPT}`;
-      await topicRoom.sendMessage(systemMessage, aiPersonId, aiPersonId);
+      await topicRoom.sendMessage(systemMessage, aiPersonId);
 
       console.log('[IngestionPlan] Created ingestion topic:', topicId);
 

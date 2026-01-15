@@ -33,11 +33,12 @@ export class ChatMemoryPlan {
   /**
    * Enable memory extraction for a chat topic
    */
-  async enableMemories(
-    topicId: SHA256IdHash<any>,
-    autoExtract = true,
-    keywords: string[] = []
-  ): Promise<ChatMemoryConfig> {
+  async enableMemories(params: {
+    topicId: SHA256IdHash<any>;
+    autoExtract?: boolean;
+    keywords?: string[];
+  }): Promise<ChatMemoryConfig> {
+    const { topicId, autoExtract = true, keywords = [] } = params;
     return await this.deps.chatMemoryService.enableMemories(topicId, {
       autoExtract,
       keywords
@@ -47,21 +48,21 @@ export class ChatMemoryPlan {
   /**
    * Disable memory extraction for a chat topic
    */
-  async disableMemories(topicId: SHA256IdHash<any>): Promise<void> {
-    await this.deps.chatMemoryService.disableMemories(topicId);
+  async disableMemories(params: { topicId: SHA256IdHash<any> }): Promise<void> {
+    await this.deps.chatMemoryService.disableMemories(params.topicId);
   }
 
   /**
    * Toggle memory extraction for a chat topic
    */
-  async toggleMemories(topicId: SHA256IdHash<any>): Promise<boolean> {
-    const isEnabled = this.deps.chatMemoryService.isEnabled(topicId);
+  async toggleMemories(params: { topicId: SHA256IdHash<any> }): Promise<boolean> {
+    const isEnabled = this.deps.chatMemoryService.isEnabled(params.topicId);
 
     if (isEnabled) {
-      await this.disableMemories(topicId);
+      await this.disableMemories(params);
       return false;
     } else {
-      await this.enableMemories(topicId);
+      await this.enableMemories(params);
       return true;
     }
   }
@@ -69,12 +70,12 @@ export class ChatMemoryPlan {
   /**
    * Get memory status for a chat topic
    */
-  getMemoryStatus(topicId: SHA256IdHash<any>): {
+  getMemoryStatus(params: { topicId: SHA256IdHash<any> }): {
     enabled: boolean;
     config?: ChatMemoryConfig;
   } {
-    const enabled = this.deps.chatMemoryService.isEnabled(topicId);
-    const config = this.deps.chatMemoryService.getConfig(topicId);
+    const enabled = this.deps.chatMemoryService.isEnabled(params.topicId);
+    const config = this.deps.chatMemoryService.getConfig(params.topicId);
 
     return { enabled, config };
   }
@@ -83,23 +84,23 @@ export class ChatMemoryPlan {
    * Extract subjects from chat messages and store as memories
    */
   async extractSubjects(
-    request: ExtractSubjectsRequest
+    params: ExtractSubjectsRequest
   ): Promise<ExtractSubjectsResponse> {
-    return await this.deps.chatMemoryService.extractAndStoreSubjects(request);
+    return await this.deps.chatMemoryService.extractAndStoreSubjects(params);
   }
 
   /**
    * Find related memories for a chat topic
    */
-  async findRelatedMemories(
-    topicId: SHA256IdHash<any>,
-    keywords: string[],
-    limit = 10
-  ): Promise<FindRelatedMemoriesResponse> {
+  async findRelatedMemories(params: {
+    topicId?: SHA256IdHash<any>;
+    keywords: string[];
+    limit?: number;
+  }): Promise<FindRelatedMemoriesResponse> {
     return await this.deps.chatMemoryService.findRelatedMemories({
-      topicId,
-      keywords,
-      limit,
+      topicId: params.topicId,
+      keywords: params.keywords,
+      limit: params.limit ?? 10,
       minRelevance: 0.3
     });
   }
@@ -107,24 +108,24 @@ export class ChatMemoryPlan {
   /**
    * Get all memory associations for a chat topic
    */
-  async getAssociations(topicId: SHA256IdHash<any>): Promise<ChatMemoryAssociation[]> {
-    return await this.deps.chatMemoryService.getAssociations(topicId);
+  async getAssociations(params: { topicId: SHA256IdHash<any> }): Promise<ChatMemoryAssociation[]> {
+    return await this.deps.chatMemoryService.getAssociations(params.topicId);
   }
 
   /**
    * Update a memory with new information from chat
    */
-  async updateMemoryFromChat(
-    subjectIdHash: SHA256IdHash<any>,
-    topicId: SHA256IdHash<any>,
-    newKeywords: string[],
-    additionalDescription?: string
-  ): Promise<void> {
+  async updateMemoryFromChat(params: {
+    subjectIdHash: SHA256IdHash<any>;
+    topicId: SHA256IdHash<any>;
+    newKeywords: string[];
+    additionalDescription?: string;
+  }): Promise<void> {
     await this.deps.chatMemoryService.updateMemory(
-      subjectIdHash,
-      topicId,
-      newKeywords,
-      additionalDescription
+      params.subjectIdHash,
+      params.topicId,
+      params.newKeywords,
+      params.additionalDescription
     );
   }
 
@@ -136,17 +137,17 @@ export class ChatMemoryPlan {
    * - Periodically for active chats
    * - On demand from UI
    */
-  async autoExtractFromTopic(
-    topicId: SHA256IdHash<any>,
-    messageLimit = 50
-  ): Promise<ExtractSubjectsResponse> {
-    if (!this.deps.chatMemoryService.isEnabled(topicId)) {
-      throw new Error(`Memories not enabled for topic: ${topicId}`);
+  async autoExtractFromTopic(params: {
+    topicId: SHA256IdHash<any>;
+    messageLimit?: number;
+  }): Promise<ExtractSubjectsResponse> {
+    if (!this.deps.chatMemoryService.isEnabled(params.topicId)) {
+      throw new Error(`Memories not enabled for topic: ${params.topicId}`);
     }
 
     return await this.extractSubjects({
-      topicId,
-      limit: messageLimit,
+      topicId: params.topicId,
+      limit: params.messageLimit ?? 50,
       includeContext: true
     });
   }
@@ -156,11 +157,15 @@ export class ChatMemoryPlan {
    *
    * Returns relevant memories based on recent message keywords
    */
-  async getMemorySuggestions(
-    topicId: SHA256IdHash<any>,
-    recentKeywords: string[],
-    limit = 5
-  ): Promise<FindRelatedMemoriesResponse> {
-    return await this.findRelatedMemories(topicId, recentKeywords, limit);
+  async getMemorySuggestions(params: {
+    topicId: SHA256IdHash<any>;
+    recentKeywords: string[];
+    limit?: number;
+  }): Promise<FindRelatedMemoriesResponse> {
+    return await this.findRelatedMemories({
+      topicId: params.topicId,
+      keywords: params.recentKeywords,
+      limit: params.limit ?? 5
+    });
   }
 }
